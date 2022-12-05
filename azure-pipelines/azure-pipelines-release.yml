@@ -28,3 +28,7 @@ jobs:
     pypi_auth_feed: 'Pypi-edk2-pytool-library'
     root_package_folder: "edk2toollib"
     name: 'windows'
+    python_versions:
+      # Job Titles cannot have periods, so we iterate
+      # With a map using entry.key and entry.value
+      '3_11': 3.11
