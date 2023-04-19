@@ -8,6 +8,7 @@
 """Code to help parse DSC files."""
 from edk2toollib.uefi.edk2.parsers.base_parser import HashFileParser
 import os
+import logging
 
 
 class DscParser(HashFileParser):
@@ -37,14 +38,22 @@ class DscParser(HashFileParser):
         self.ParsingInBuildOption = 0
         self.LibraryClassToInstanceDict = {}
         self.Pcds = []
+        self.PcdValueDict = {}
         self._no_fail_mode = False
         self._dsc_file_paths = set()  # This includes the full paths for every DSC that makes up the file
+    
+    def ReplacePcds(self, line: str) -> str:
+        if line.startswith("!if"):
+            tokens = line.split()
+            if tokens[1] in self.PcdValueDict:
+                line = line.replace(tokens[1], self.PcdValueDict[tokens[1]])
+        return line
 
     def __ParseLine(self, Line, file_name=None, lineno=None):
         line_stripped = self.StripComment(Line).strip()
         if (len(line_stripped) < 1):
             return ("", [], None)
-
+        line_stripped = self.ReplacePcds(line_stripped)
         line_resolved = self.ReplaceVariables(line_stripped)
         if (self.ProcessConditional(line_resolved)):
             # was a conditional
@@ -92,6 +101,7 @@ class DscParser(HashFileParser):
                     # should be a pcd statement
                     p = line_resolved.partition('|')
                     self.Pcds.append(p[0].strip())
+                    self.PcdValueDict[p[0].strip()] = p[2].strip()
                     self.Logger.debug("Found a Pcd in a 64bit Module Override section: %s" % p[0].strip())
             else:
                 if (".inf" in line_resolved.lower()):
@@ -119,6 +129,7 @@ class DscParser(HashFileParser):
                     # should be a pcd statement
                     p = line_resolved.partition('|')
                     self.Pcds.append(p[0].strip())
+                    self.PcdValueDict[p[0].strip()] = p[2].strip()
                     self.Logger.debug("Found a Pcd in a 32bit Module Override section: %s" % p[0].strip())
 
             else:
@@ -146,6 +157,7 @@ class DscParser(HashFileParser):
                     # should be a pcd statement
                     p = line_resolved.partition('|')
                     self.Pcds.append(p[0].strip())
+                    self.PcdValueDict[p[0].strip()] = p[2].strip()
                     self.Logger.debug("Found a Pcd in a Module Override section: %s" % p[0].strip())
 
             else:
@@ -172,6 +184,7 @@ class DscParser(HashFileParser):
                 # should be a pcd statement
                 p = line_resolved.partition('|')
                 self.Pcds.append(p[0].strip())
+                self.PcdValueDict[p[0].strip()] = p[2].strip()
                 self.Logger.debug("Found a Pcd in a PCD section: %s" % p[0].strip())
             return (line_resolved, [], None)
         else:
