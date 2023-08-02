@@ -185,20 +185,22 @@ class Edk2Path(object):
         """List of package paths as strings."""
         return [str(p) for p in self._package_path_list]
 
-    def GetEdk2RelativePathFromAbsolutePath(self, abspath: str):
+    def GetEdk2RelativePathFromAbsolutePath(self, *abspath: str):
         """Given an absolute path return a edk2 path relative to workspace or packagespath.
 
         Args:
-            abspath: absolute path to a file or directory. Supports both Windows and Posix style paths
+            *abspath: absolute path to a file or directory. Can be the entire path or parts of the path provided
+                separately. Supports both Windows and Posix style paths
 
         Returns:
             (str): POSIX-like relative path to workspace or packagespath
             (None): abspath is none
             (None): path is not valid
         """
-        if abspath is None:
+        if abspath == (None,):
             return None
-        abspath = Path(abspath.replace("\\", "/"))
+
+        abspath = Path(*[part.replace("\\", "/") for part in abspath])
 
         relpath = None
         found = False
@@ -234,11 +236,11 @@ class Edk2Path(object):
         self.logger.error(f'AbsolutePath: {abspath}')
         return None
 
-    def GetAbsolutePathOnThisSystemFromEdk2RelativePath(self, relpath: str, log_errors: Optional[bool]=True):
+    def GetAbsolutePathOnThisSystemFromEdk2RelativePath(self, *relpath: str, log_errors: Optional[bool]=True):
         """Given a edk2 relative path return an absolute path to the file in this workspace.
 
         Args:
-            relpath: Relative path to convert. Supports both Windows and Posix style paths.
+            *relpath: Relative path to convert. Can be the entire path or parts of the path provided separately
             log_errors: whether to log errors
 
         Returns:
@@ -246,9 +248,10 @@ class Edk2Path(object):
             (None): invalid relpath
             (None): Unable to get the absolute path
         """
-        if relpath is None:
+        if relpath == (None,):
             return None
-        relpath = relpath.replace("\\", "/")
+
+        relpath = Path(*[part.replace("\\", "/") for part in relpath])
         abspath = self._workspace_path / relpath
         if abspath.exists():
             return str(abspath)
