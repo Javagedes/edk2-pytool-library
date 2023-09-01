@@ -7,26 +7,35 @@
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
 """A module to generate a table containing fv information."""
+import sqlite3
 from pathlib import Path
 
-from tinyrecord import transaction
-
-from edk2toollib.database import Edk2DB, TableGenerator
+from edk2toollib.database.tables.base_table import TableGenerator
 from edk2toollib.uefi.edk2.parsers.fdf_parser import FdfParser as FdfP
+from edk2toollib.uefi.edk2.path_utilities import Edk2Path
 
+CREATE_INSTANCED_FV_TABLE = """
+CREATE TABLE IF NOT EXISTS instanced_fv (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    env INTEGER,
+    fv_name TEXT,
+    fdf TEXT,
+    path TEXT
+)
+"""
+
+INSERT_INSTANCED_FV_ROW = """
+INSERT INTO instanced_fv (env, fv_name, fdf, path)
+VALUES (?, ?, ?, ?)
+"""
+
+INSERT_JUNCTION_ROW = '''
+INSERT INTO junction (table1, key1, table2, key2)
+VALUES (?, ?, ?, ?)
+'''
 
 class InstancedFvTable(TableGenerator):
-    """A Table Generator that parses a single FDF file and generates a table containing FV information.
-
-    Generates a table with the following schema:
-
-    ``` py
-    table_name = "instanced_fv"
-    |------------------------------------------------------|
-    | FV_NAME | FDF | PATH | TARGET | INF_LIST | FILE_LIST |
-    |------------------------------------------------------|
-    ```
-    """  # noqa: E501
+    """A Table Generator that parses a single FDF file and generates a table containing FV information."""  # noqa: E501
     def __init__(self, *args, **kwargs):
         """Initialize the query with the specific settings."""
         self.env = kwargs.pop("env")
@@ -35,9 +44,13 @@ class InstancedFvTable(TableGenerator):
         self.arch = self.env["TARGET_ARCH"].split(" ")
         self.target = self.env["TARGET"]
 
-    def parse(self, db: Edk2DB) -> None:
+    def create_tables(self, db_cursor: sqlite3.Cursor) -> None:
+        """Create the tables necessary for this parser."""
+        db_cursor.execute(CREATE_INSTANCED_FV_TABLE)
+
+    def parse(self, db_cursor: sqlite3.Cursor, pathobj: Edk2Path) -> None:
         """Parse the workspace and update the database."""
-        self.pathobj = db.pathobj
+        self.pathobj = pathobj
         self.ws = Path(self.pathobj.WorkspacePath)
 
         # Our DscParser subclass can now parse components, their scope, and their overrides
@@ -45,10 +58,7 @@ class InstancedFvTable(TableGenerator):
         fdfp.SetInputVars(self.env)
         fdfp.ParseFile(self.fdf)
 
-        table_name = 'instanced_fv'
-        table = db.table(table_name, cache_size=None)
-
-        entry_list = []
+        env = db_cursor.execute("SELECT id FROM environment ORDER BY date DESC LIMIT 1").fetchone()[0]
         for fv in fdfp.FVs:
 
             inf_list = []  # Some INF's start with RuleOverride. We only need the INF
@@ -59,13 +69,7 @@ class InstancedFvTable(TableGenerator):
                     inf = str(Path(self.pathobj.GetEdk2RelativePathFromAbsolutePath(inf)))
                 inf_list.append(Path(inf).as_posix())
 
-            entry_list.append({
-                "FV_NAME": fv,
-                "FDF": Path(self.fdf).name,
-                "PATH": self.fdf,
-                "INF_LIST": inf_list,
-                "FILE_LIST": fdfp.FVs[fv]["Files"]
-            })
-
-        with transaction(table) as tr:
-            tr.insert_multiple(entry_list)
+            db_cursor.execute(INSERT_INSTANCED_FV_ROW, (env, fv, Path(self.fdf).name, self.fdf))
+            fv_id = db_cursor.lastrowid
+            for inf in inf_list:
+                db_cursor.execute(INSERT_JUNCTION_ROW, ("instanced_fv", fv_id, "inf", inf))

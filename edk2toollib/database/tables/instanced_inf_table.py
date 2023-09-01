@@ -10,26 +10,44 @@
 import logging
 import re
 from pathlib import Path
+from sqlite3 import Cursor
 
-from tinyrecord import transaction
-
-from edk2toollib.database.edk2_db import Edk2DB, TableGenerator
+from edk2toollib.database.tables.base_table import TableGenerator
 from edk2toollib.uefi.edk2.parsers.dsc_parser import DscParser as DscP
 from edk2toollib.uefi.edk2.parsers.inf_parser import InfParser as InfP
+from edk2toollib.uefi.edk2.path_utilities import Edk2Path
 
+CREATE_INSTANCED_INF_TABLE = '''
+CREATE TABLE IF NOT EXISTS instanced_inf (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    env INTEGER,
+    dsc TEXT,
+    path TEXT,
+    name TEXT,
+    arch TEXT,
+    component TEXT,
+    FOREIGN KEY(env) REFERENCES environment(env)
+)
+'''
+
+INSERT_INSTANCED_INF_ROW = '''
+INSERT INTO instanced_inf (env, dsc, path, name, arch, component)
+VALUES (?, ?, ?, ?, ?, ?)
+'''
+
+INSERT_JUNCTION_ROW = '''
+INSERT INTO junction (table1, key1, table2, key2)
+VALUES (?, ?, ?, ?)
+'''
+
+GET_ROW_ID = '''
+SELECT id FROM instanced_inf
+WHERE env = ? and path = ? and dsc = ?
+LIMIT 1
+'''
 
 class InstancedInfTable(TableGenerator):
-    """A Table Generator that parses a single DSC file and generates a table.
-
-    Generates a table with the following schema:
-
-    ``` py
-    table_name = "instanced_inf"
-    |----------------------------------------------------------------------------------------------------------------------------------|
-    | DSC | GUID | LIBRARY_CLASS | PATH | PHASES | SOURCES_USED | LIBRARIES_USED | PROTOCOLS_USED | GUIDS_USED | PPIS_USED | PCDS_USED |
-    |----------------------------------------------------------------------------------------------------------------------------------|
-    ```
-    """  # noqa: E501
+    """A Table Generator that parses a single DSC file and generates a table."""
     SECTION_LIBRARY = "LibraryClasses"
     SECTION_COMPONENT = "Components"
     SECTION_REGEX = re.compile(r"\[(.*)\]")
@@ -43,9 +61,13 @@ class InstancedInfTable(TableGenerator):
         self.arch = self.env["TARGET_ARCH"].split(" ")  # REQUIRED
         self.target = self.env["TARGET"]  # REQUIRED
 
-    def parse(self, db: Edk2DB) -> None:
+    def create_tables(self, db_cursor: Cursor) -> None:
+        """Create the tables necessary for this parser."""
+        db_cursor.execute(CREATE_INSTANCED_INF_TABLE)
+
+    def parse(self, db_cursor: Cursor, pathobj: Edk2Path) -> None:
         """Parse the workspace and update the database."""
-        self.pathobj = db.pathobj
+        self.pathobj = pathobj
         self.ws = Path(self.pathobj.WorkspacePath)
 
         # Our DscParser subclass can now parse components, their scope, and their overrides
@@ -70,10 +92,23 @@ class InstancedInfTable(TableGenerator):
             if Path(entry["PATH"]).is_absolute():
                 entry["PATH"] = self.pathobj.GetEdk2RelativePathFromAbsolutePath(entry["PATH"])
 
-        table_name = 'instanced_inf'
-        table = db.table(table_name, cache_size=None)
-        with transaction(table) as tr:
-            tr.insert_multiple(inf_entries)
+        env = db_cursor.execute("SELECT id FROM environment ORDER BY date DESC LIMIT 1").fetchone()[0]
+
+        # add instanced_inf entries
+        for entry in inf_entries:
+            db_cursor.execute(
+                INSERT_INSTANCED_INF_ROW,
+                (env, entry["DSC"], entry["PATH"], entry["NAME"], entry["ARCH"], entry["COMPONENT"])
+            )
+
+        # add junction entries
+        for entry in inf_entries:
+            inf_id = db_cursor.execute(GET_ROW_ID, (env, entry["PATH"], entry["DSC"])).fetchone()[0]
+            for source in entry["SOURCES_USED"]:
+                db_cursor.execute(INSERT_JUNCTION_ROW, ("instanced_inf", inf_id, "source", source))
+            for library in entry["LIBRARIES_USED"]:
+                used_inf_id = db_cursor.execute(GET_ROW_ID, (env, library, entry["DSC"])).fetchone()[0]
+                db_cursor.execute(INSERT_JUNCTION_ROW, ("instanced_inf", inf_id, "instanced_inf", used_inf_id))
 
     def _build_inf_table(self, dscp: DscP):
 
@@ -96,7 +131,7 @@ class InstancedInfTable(TableGenerator):
         # Move entries to correct table
         for entry in inf_entries:
             if entry["PATH"] == entry["COMPONENT"]:
-                del entry["COMPONENT"]
+                entry["COMPONENT"] = None
 
         return inf_entries
 
@@ -126,7 +161,8 @@ class InstancedInfTable(TableGenerator):
             library_instances.append(self._lib_to_instance(lib, scope, library_dict, override_dict))
         # Append all NULL library instances
         for null_lib in override_dict["NULL"]:
-            library_instances.append(null_lib)
+            if null_lib != inf:
+                library_instances.append(null_lib)
 
         # Time to visit in libraries that we have not visited yet.
         to_return = []
@@ -138,6 +174,7 @@ class InstancedInfTable(TableGenerator):
         to_return.append({
             "DSC": Path(self.dsc).name,
             "PATH": Path(inf).as_posix(),
+            "GUID": infp.Dict.get("FILE_GUID", ""),
             "NAME": infp.Dict["BASE_NAME"],
             "COMPONENT": Path(component).as_posix(),
             "MODULE_TYPE": infp.Dict["MODULE_TYPE"],
