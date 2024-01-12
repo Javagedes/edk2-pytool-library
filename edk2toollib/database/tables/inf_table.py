@@ -89,23 +89,19 @@ class InfTable(TableGenerator):
         inf_parser.ParseFile(filename)
 
         pkg = pathobj.GetContainingPackage(str(inf_parser.Path))
-        path = Path(inf_parser.Path).as_posix()
+        rel_path = pathobj.GetEdk2RelativePathFromAbsolutePath(str(inf_parser.Path))
 
         # Resolve source file paths when they contain ".."
         source_list = []
         for source in inf_parser.Sources:
-            source = (Path(filename).parent / source).resolve().as_posix()
-            if pkg is not None:
-                source_list.append(source[source.find(pkg):])
-            else:
-                source_list.append(source)
+            source = (Path(filename).parent / source).resolve()
+            source = Path(pathobj.GetEdk2RelativePathFromAbsolutePath(str(source))).as_posix()
+            source_list.append(source)
 
-        if pkg:
-            path = path[path.find(pkg):]
         data = {}
         data["GUID"] = inf_parser.Dict.get("FILE_GUID", "")
         data["LIBRARY_CLASS"] = inf_parser.LibraryClass or None
-        data["PATH"] = Path(path).as_posix()
+        data["PATH"] = Path(rel_path).as_posix()
         data["PHASES"] = inf_parser.SupportedPhases
         data["SOURCES_USED"] = source_list
         data["BINARIES_USED"] = inf_parser.Binaries

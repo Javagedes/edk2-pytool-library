@@ -258,11 +258,9 @@ class InstancedInfTable(TableGenerator):
         full_inf = self.pathobj.GetAbsolutePathOnThisSystemFromEdk2RelativePath(inf)
         pkg = self.pathobj.GetContainingPackage(full_inf)
         for source in infp.get_sources([arch]):
-            source = (Path(inf).parent / source).resolve().as_posix()
-            if pkg is not None:
-                source_list.append(source[source.find(pkg):])
-            else:
-                source_list.append(source)
+            source = (Path(full_inf).parent / source).resolve()
+            source = Path(self.pathobj.GetEdk2RelativePathFromAbsolutePath(str(source))).as_posix()
+            source_list.append(source)
 
         # Return Paths as posix paths, which is Edk2 standard.
         to_return.append({
