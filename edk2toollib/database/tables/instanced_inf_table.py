@@ -68,6 +68,10 @@ class InstancedInfTable(TableGenerator):
 
         # Parse and insert
         inf_entries = self._build_inf_table(dscp)
+        inf_paths = [d["PATH"] for d in inf_entries]
+        missing_infs = [path for sublist in dscp.ScopedLibraryDict.values() for path in sublist if path not in inf_paths]
+        for missing_inf in missing_infs:
+            print(missing_inf)
         return self._insert_db_rows(session, env_id, inf_entries)
 
     def _insert_db_rows(self, session: Session, env_id: str, inf_entries: list) -> int:
